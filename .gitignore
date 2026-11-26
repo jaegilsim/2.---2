@@ -1,1 +1,6 @@
 .env
+/private_data/user.xlsx
+/excel/user.xlsx
+/storage/orders.json
+/storage/mail-deliveries.json
+/storage/mail-previews/*.eml
