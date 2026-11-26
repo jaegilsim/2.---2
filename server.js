@@ -1,15 +1,17 @@
 const http = require("node:http");
-const { createHash, randomUUID } = require("node:crypto");
+const { createHash, randomBytes, randomUUID } = require("node:crypto");
 const { mkdir, readFile, rename, unlink, writeFile } = require("node:fs/promises");
 const path = require("node:path");
 const ExcelJS = require("exceljs");
 const nodemailer = require("nodemailer");
+const { authenticateUser } = require("./auth");
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 const port = Number(process.env.PORT || 3000);
 const host = "127.0.0.1";
 const excelDirectory = path.join(__dirname, "excel");
+const userFilePath = path.join(__dirname, "private_data", "user.xlsx");
 const customersPath = path.join(excelDirectory, "거래처내역.xlsx");
 const itemsPath = path.join(excelDirectory, "품목내역.xlsx");
 const materialsPath = path.join(excelDirectory, "재질정보.xlsx");
@@ -40,6 +42,8 @@ const workbookSheets = {
 };
 let ordersStoreQueue = Promise.resolve();
 let mailDeliveryQueue = Promise.resolve();
+const sessions = new Map();
+const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 
 async function countDataRows(filename, sheetName) {
   const workbook = new ExcelJS.Workbook();
@@ -726,9 +730,68 @@ function sendJson(response, statusCode, body) {
   response.end(JSON.stringify(body));
 }
 
+function getSession(request) {
+  const cookies = (request.headers.cookie || "").split(";");
+  const sessionCookie = cookies.map((cookie) => cookie.trim())
+    .find((cookie) => cookie.startsWith("quote_session="));
+  if (!sessionCookie) {
+    return null;
+  }
+
+  const token = sessionCookie.slice("quote_session=".length);
+  const session = sessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+function sendUnauthorized(response) {
+  sendJson(response, 401, { error: "로그인이 필요합니다." });
+}
+
 const server = http.createServer(async (request, response) => {
   const requestUrl = new URL(request.url, `http://${host}`);
   const pathname = requestUrl.pathname.replace(/\/+$/, "") || "/";
+
+  if (request.method === "POST" && pathname === "/api/login") {
+    try {
+      const body = await readJsonBody(request);
+      const id = typeof body.username === "string" ? body.username.trim() : "";
+      const password = typeof body.password === "string" ? body.password : "";
+      if (!id || id.length > 100 || !password || password.length > 256) {
+        sendJson(response, 400, { error: "아이디와 비밀번호를 입력해 주세요." });
+        return;
+      }
+
+      const user = await authenticateUser(userFilePath, id, password);
+      if (!user) {
+        sendJson(response, 401, { error: "아이디 또는 비밀번호를 확인해 주세요." });
+        return;
+      }
+
+      const token = randomBytes(32).toString("hex");
+      sessions.set(token, {
+        user,
+        expiresAt: Date.now() + sessionLifetimeMs,
+      });
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Set-Cookie": `quote_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${sessionLifetimeMs / 1000}`,
+      });
+      response.end(JSON.stringify({ authenticated: true, name: user.name }));
+    } catch (error) {
+      if (Number.isInteger(error.statusCode)) {
+        sendJson(response, error.statusCode, { error: error.message });
+      } else {
+        console.error("Failed to authenticate account:", error);
+        sendJson(response, 503, { error: "계정 파일을 읽지 못했습니다. 관리자에게 문의해 주세요." });
+      }
+    }
+    return;
+  }
 
   if (request.method === "GET" && pathname === "/api/health") {
     try {
@@ -738,6 +801,30 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 500, { error: "Failed to read Excel data" });
     }
     return;
+  }
+
+  if (pathname.startsWith("/api/") && pathname !== "/api/health") {
+    const session = getSession(request);
+    if (!session) {
+      sendUnauthorized(response);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/logout") {
+      const sessionCookie = (request.headers.cookie || "").split(";")
+        .map((cookie) => cookie.trim())
+        .find((cookie) => cookie.startsWith("quote_session="));
+      if (sessionCookie) {
+        sessions.delete(sessionCookie.slice("quote_session=".length));
+      }
+      response.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Set-Cookie": "quote_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+      });
+      response.end(JSON.stringify({ authenticated: false }));
+      return;
+    }
   }
 
   if (request.method === "GET" && pathname === "/api/items") {
@@ -1184,6 +1271,11 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (request.method === "GET" && (pathname === "/quote.html" || pathname === "/materials")) {
+    if (!getSession(request)) {
+      response.writeHead(303, { Location: "/", "Cache-Control": "no-store" });
+      response.end();
+      return;
+    }
     try {
       const page = await readFile(quotePagePath);
       response.writeHead(200, {
