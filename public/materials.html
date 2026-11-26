@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f7fb">
+    <title>견적 요청 · 중량 산출</title>
+    <link rel="stylesheet" href="/materials.css">
+  </head>
+  <body>
+    <main class="shell quote-shell">
+      <header class="page-header">
+        <p class="eyebrow">QUOTE · WEIGHT ESTIMATE</p>
+        <h1>견적 요청</h1>
+        <p class="intro">거래처와 품목 정보를 선택하고 예상 중량을 확인하세요.</p>
+      </header>
+
+      <form class="quote-card" autocomplete="off" novalidate>
+        <section class="quote-section" aria-labelledby="parties-title">
+          <div class="section-heading">
+            <span class="section-number">01</span>
+            <div>
+              <h2 id="parties-title">거래처 및 품목</h2>
+              <p>검색 팝업에서 거래처와 품목을 선택합니다.</p>
+            </div>
+          </div>
+          <div class="reference-picker-grid">
+            <div class="reference-picker">
+              <div>
+                <span class="reference-picker-label">거래처</span>
+                <p id="selected-customer-name" class="reference-picker-name">선택된 거래처가 없습니다.</p>
+                <p id="selected-customer-details" class="reference-picker-details"></p>
+              </div>
+              <button id="open-customer-dialog" type="button">거래처 선택</button>
+            </div>
+            <div class="reference-picker">
+              <div>
+                <span class="reference-picker-label">품목</span>
+                <p id="selected-item-name" class="reference-picker-name">선택된 품목이 없습니다.</p>
+                <p id="selected-item-details" class="reference-picker-details"></p>
+              </div>
+              <button id="open-item-dialog" type="button">품목 선택</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="quote-section" aria-labelledby="details-title">
+          <div class="section-heading">
+            <span class="section-number">02</span>
+            <div>
+              <h2 id="details-title">재질 및 주문 정보</h2>
+              <p>재질의 계산용 밀도와 부피, 수량을 입력합니다.</p>
+            </div>
+          </div>
+          <div class="quote-field-grid">
+            <label class="field" for="material-select">
+              재질
+              <select id="material-select" class="field-control" disabled>
+                <option value="">재질 목록을 불러오는 중입니다.</option>
+              </select>
+            </label>
+            <label class="field" for="material-density">
+              비중(계산용밀도, g/cm³)
+              <input id="material-density" class="field-control" type="text" readonly placeholder="재질 선택 시 표시">
+            </label>
+            <label class="field" for="volume">
+              부피 (cm³)
+              <input id="volume" class="field-control" type="number" min="0" step="any" inputmode="decimal" placeholder="예: 1250" required>
+              <span id="volume-error" class="field-error" aria-live="polite"></span>
+            </label>
+            <label class="field" for="quantity">
+              수량
+              <input id="quantity" class="field-control" type="number" min="1" step="1" inputmode="numeric" placeholder="예: 20" required>
+              <span id="quantity-error" class="field-error" aria-live="polite"></span>
+            </label>
+          </div>
+          <p id="selection-message" class="notice" role="status" aria-live="polite">
+            재질 목록을 조회하고 있습니다.
+          </p>
+        </section>
+
+        <section class="quote-section" aria-labelledby="results-title">
+          <div class="section-heading">
+            <span class="section-number">03</span>
+            <div>
+              <h2 id="results-title">예상 중량</h2>
+              <p>입력값이 바뀌면 결과가 자동으로 갱신됩니다.</p>
+            </div>
+          </div>
+          <div class="result-grid" aria-live="polite">
+            <label class="field result-field" for="unit-weight">
+              개당중량
+              <span class="result-input">
+                <input id="unit-weight" class="field-control" type="text" readonly placeholder="자동 계산">
+                <span>kg</span>
+              </span>
+            </label>
+            <label class="field result-field" for="total-weight">
+              총중량
+              <span class="result-input">
+                <input id="total-weight" class="field-control" type="text" readonly placeholder="자동 계산">
+                <span>kg</span>
+              </span>
+            </label>
+          </div>
+          <p id="calculation-message" class="notice" role="status" aria-live="polite">
+            재질, 부피, 수량을 입력하면 자동으로 계산됩니다.
+          </p>
+          <p class="source">총중량은 반올림 전 개당중량 × 수량으로 계산합니다.</p>
+          <div class="order-save-row">
+            <label class="field" for="request-id">
+              요청 ID
+              <input id="request-id" class="field-control request-id" type="text" readonly placeholder="입력 시 자동 생성">
+            </label>
+            <button id="save-order" class="primary-button" type="button">견적 저장</button>
+          </div>
+          <p id="order-message" class="notice" role="status" aria-live="polite">
+            거래처, 품목, 재질, 부피, 수량을 입력한 뒤 저장하세요.
+          </p>
+        </section>
+      </form>
+
+      <section class="order-history" aria-labelledby="orders-title">
+        <div class="section-heading">
+          <span class="section-number">04</span>
+          <div>
+            <h2 id="orders-title">저장된 견적</h2>
+            <p>저장 후 서버 목록을 다시 조회합니다.</p>
+          </div>
+        </div>
+        <p id="orders-status" class="notice" role="status" aria-live="polite">저장된 요청을 불러오는 중입니다.</p>
+        <div class="table-card">
+          <div class="table-scroll">
+            <table class="orders-table">
+              <thead>
+                <tr>
+                  <th scope="col">요청 ID · 접수일시</th>
+                  <th scope="col">거래처</th>
+                  <th scope="col">품목</th>
+                  <th scope="col">재질 · 적용밀도</th>
+                  <th scope="col">부피 · 수량</th>
+                  <th scope="col">개당중량</th>
+                  <th scope="col">총중량</th>
+                  <th scope="col">작업</th>
+                </tr>
+              </thead>
+              <tbody id="orders-body">
+                <tr><td class="state" colspan="8">저장된 요청을 불러오는 중입니다.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <details class="reference-data">
+        <summary>활성 재질 기준정보</summary>
+        <section aria-label="재질 목록">
+          <div class="summary">
+            <div class="count"><strong id="material-count">—</strong><span>활성 재질</span></div>
+            <div class="actions">
+              <label class="sr-only" for="search">재질코드 또는 재질명 검색</label>
+              <input id="search" type="search" placeholder="코드 또는 재질명 검색" autocomplete="off">
+              <button id="refresh" type="button">새로고침</button>
+            </div>
+          </div>
+
+          <div class="table-card">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">재질코드</th>
+                    <th scope="col">재질명</th>
+                    <th scope="col">계산용 밀도</th>
+                  </tr>
+                </thead>
+                <tbody id="materials-body">
+                  <tr><td class="state" colspan="3">재질 목록을 불러오는 중입니다.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p id="status" class="source" aria-live="polite">기준정보 파일에서 최신 목록을 불러옵니다.</p>
+        </section>
+      </details>
+    </main>
+
+    <dialog id="item-dialog" class="item-dialog" aria-labelledby="item-dialog-title">
+      <div class="item-dialog-content">
+        <header class="item-dialog-header">
+          <div>
+            <p class="eyebrow">Reference data · Items</p>
+            <h2 id="item-dialog-title">품목 선택</h2>
+          </div>
+          <button id="close-item-dialog" class="item-close-button" type="button" aria-label="닫기">×</button>
+        </header>
+        <label class="item-dialog-search" for="item-search">
+          품목 검색
+          <input id="item-search" type="search" placeholder="코드, 품목명 또는 규격" autocomplete="off">
+        </label>
+        <p id="item-search-status" class="item-search-status" role="status" aria-live="polite"></p>
+        <div class="item-results">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">코드</th>
+                <th scope="col">품목명</th>
+                <th scope="col">규격</th>
+                <th scope="col"><span class="sr-only">선택</span></th>
+              </tr>
+            </thead>
+            <tbody id="item-results-body">
+              <tr><td class="state" colspan="4">품목을 검색해 주세요.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <footer class="item-dialog-footer">
+          <button id="cancel-item-selection" type="button">취소</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog id="customer-dialog" class="item-dialog" aria-labelledby="customer-dialog-title">
+      <div class="item-dialog-content">
+        <header class="item-dialog-header">
+          <div>
+            <p class="eyebrow">Reference data · Customers</p>
+            <h2 id="customer-dialog-title">거래처 선택</h2>
+          </div>
+          <button id="close-customer-dialog" class="item-close-button" type="button" aria-label="닫기">×</button>
+        </header>
+        <label class="item-dialog-search" for="customer-search">
+          거래처 검색
+          <input id="customer-search" type="search" placeholder="코드, 거래처명 또는 담당자" autocomplete="off">
+        </label>
+        <p id="customer-search-status" class="item-search-status" role="status" aria-live="polite"></p>
+        <div class="item-results">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">거래처코드</th>
+                <th scope="col">거래처명</th>
+                <th scope="col">담당자</th>
+                <th scope="col"><span class="sr-only">선택</span></th>
+              </tr>
+            </thead>
+            <tbody id="customer-results-body">
+              <tr><td class="state" colspan="4">거래처를 검색해 주세요.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <footer class="item-dialog-footer">
+          <button id="cancel-customer-selection" type="button">취소</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog id="delete-order-dialog" class="item-dialog delete-order-dialog" aria-labelledby="delete-order-title">
+      <div class="item-dialog-content">
+        <header class="item-dialog-header">
+          <div>
+            <p class="eyebrow">Saved quote · Delete</p>
+            <h2 id="delete-order-title">견적 삭제 확인</h2>
+          </div>
+          <button id="close-delete-order" class="item-close-button" type="button" aria-label="닫기">×</button>
+        </header>
+        <p class="delete-order-prompt">아래 요청을 삭제할까요?</p>
+        <dl class="delete-order-details">
+          <div>
+            <dt>요청 ID</dt>
+            <dd id="delete-order-id"></dd>
+          </div>
+          <div>
+            <dt>거래처</dt>
+            <dd id="delete-order-customer"></dd>
+          </div>
+          <div>
+            <dt>품목</dt>
+            <dd id="delete-order-item"></dd>
+          </div>
+        </dl>
+        <p id="delete-order-status" class="item-search-status" role="status" aria-live="polite"></p>
+        <footer class="item-dialog-footer">
+          <button id="cancel-delete-order" type="button">취소</button>
+          <button id="confirm-delete-order" class="danger-button" type="button">삭제 확인</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog id="mail-preview-dialog" class="item-dialog mail-preview-dialog" aria-labelledby="mail-preview-title">
+      <div class="item-dialog-content">
+        <header class="item-dialog-header">
+          <div>
+            <p class="eyebrow">Saved quote · Email preview</p>
+            <h2 id="mail-preview-title">메일 미리보기</h2>
+          </div>
+          <button id="close-mail-preview" class="item-close-button" type="button" aria-label="닫기">×</button>
+        </header>
+        <dl class="delete-order-details mail-preview-details">
+          <div>
+            <dt>요청 ID</dt>
+            <dd id="mail-preview-request-id"></dd>
+          </div>
+          <div>
+            <dt>거래처 · 품목</dt>
+            <dd id="mail-preview-order-summary"></dd>
+          </div>
+        </dl>
+        <p class="mail-preview-warning">
+          .eml 미리보기는 발송되지 않습니다. SMTP 발송 버튼은 확인 후 수신자에게 실제 메일을 보냅니다.
+        </p>
+        <div class="mail-preview-fields">
+          <label class="field" for="mail-recipient">
+            수신자 1명
+            <input id="mail-recipient" class="field-control" type="email" autocomplete="email" required maxlength="254" placeholder="name@example.com">
+          </label>
+          <label class="field" for="mail-subject">
+            제목 · 저장 기록 기반
+            <input id="mail-subject" class="field-control" type="text" readonly>
+          </label>
+          <label class="field" for="mail-body">
+            본문 · 서버가 저장 기록으로 생성
+            <textarea id="mail-body" class="field-control mail-body" rows="12" readonly></textarea>
+          </label>
+        </div>
+        <p id="mail-preview-status" class="item-search-status" role="status" aria-live="polite">
+          저장된 견적을 바탕으로 미리보기를 불러옵니다.
+        </p>
+        <div id="mail-download-row" class="mail-download-row" hidden>
+          <a id="mail-download-link" class="mail-download-link" href="" download>EML 다운로드</a>
+        </div>
+        <footer class="item-dialog-footer">
+          <button id="cancel-mail-preview" type="button">닫기</button>
+          <button id="create-mail-preview" class="primary-button" type="button" disabled>.eml 미리보기 만들기</button>
+          <button id="send-mail" class="send-mail-button" type="button" disabled>SMTP로 실제 발송</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <script src="/materials.js" defer></script>
+  </body>
+</html>
