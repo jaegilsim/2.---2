@@ -225,6 +225,7 @@ module.exports = {
   authenticateUser,
   hashPassword,
   loadUsers,
+  normalizeId,
   setupUser,
   verifyPassword,
 };

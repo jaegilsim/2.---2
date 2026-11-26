@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "auth:setup": "node auth-setup.js",
+    "auth:supabase:sync": "node scripts/sync-users-to-supabase.js",
     "test": "node --test"
   },
   "dependencies": {

@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "outputDirectory": "public",
+  "functions": {
+    "api/[...route].js": {
+      "includeFiles": "excel/{거래처내역.xlsx,품목내역.xlsx,재질정보.xlsx,주문내역.xlsx}"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/quote.html",
+      "destination": "/api/quote"
+    },
+    {
+      "source": "/materials",
+      "destination": "/api/quote"
+    }
+  ]
+}

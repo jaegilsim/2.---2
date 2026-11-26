@@ -1,10 +1,29 @@
 const http = require("node:http");
-const { createHash, randomBytes, randomUUID } = require("node:crypto");
+const {
+  createHash,
+  createHmac,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} = require("node:crypto");
 const { mkdir, readFile, rename, unlink, writeFile } = require("node:fs/promises");
 const path = require("node:path");
 const ExcelJS = require("exceljs");
 const nodemailer = require("nodemailer");
-const { authenticateUser } = require("./auth");
+const { authenticateUser, verifyPassword } = require("./auth");
+const {
+  claimMailDelivery,
+  createOrder,
+  deleteOrder,
+  findUserById,
+  getMailDelivery,
+  getOrder,
+  listMailDeliveries,
+  listOrders,
+  readMailPreview,
+  updateMailDelivery,
+  writeMailPreview,
+} = require("./supabase-store");
 
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
@@ -44,6 +63,10 @@ let ordersStoreQueue = Promise.resolve();
 let mailDeliveryQueue = Promise.resolve();
 const sessions = new Map();
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
+const isVercel = process.env.VERCEL === "1";
+const isSupabaseConfigured = Boolean(
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
+);
 
 async function countDataRows(filename, sheetName) {
   const workbook = new ExcelJS.Workbook();
@@ -393,10 +416,22 @@ async function readJsonRows(filePath, description) {
 }
 
 async function readOrderRows() {
+  if (isSupabaseConfigured) {
+    return listOrders();
+  }
+  if (isVercel) {
+    throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+  }
   return readJsonRows(ordersStorePath, "Order storage");
 }
 
 async function readMailDeliveryRows() {
+  if (isSupabaseConfigured) {
+    return listMailDeliveries();
+  }
+  if (isVercel && !isSupabaseConfigured) {
+    throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+  }
   return readJsonRows(mailDeliveriesPath, "Mail delivery storage");
 }
 
@@ -425,10 +460,16 @@ async function writeJsonRows(filePath, rows, temporaryPrefix) {
 }
 
 async function writeOrderRows(orders) {
+  if (isVercel || isSupabaseConfigured) {
+    throw createHttpError(503, "Order writes must use the Supabase order API");
+  }
   await writeJsonRows(ordersStorePath, orders, "orders");
 }
 
 async function writeMailDeliveryRows(deliveries) {
+  if (isVercel || isSupabaseConfigured) {
+    throw createHttpError(503, "Mail delivery writes must use the Supabase delivery API");
+  }
   await writeJsonRows(mailDeliveriesPath, deliveries, "mail-deliveries");
 }
 
@@ -639,11 +680,128 @@ function createSmtpTransport(config) {
   });
 }
 
+async function sendMailWithSupabase(mailRequest) {
+  const order = await getOrder(mailRequest.requestId);
+  if (!order) {
+    throw createHttpError(404, "Saved order was not found");
+  }
+
+  const preview = buildMailPreview(order);
+  if (mailRequest.subject !== preview.subject || mailRequest.body !== preview.body) {
+    throw createHttpError(409, "Mail content no longer matches the saved order preview");
+  }
+
+  const smtpConfig = getSmtpConfig();
+  const now = new Date().toISOString();
+  const claim = await claimMailDelivery({
+    requestId: mailRequest.requestId,
+    recipient: mailRequest.recipient,
+    fingerprint: getMailFingerprint(mailRequest),
+    status: "sending",
+    attempts: 1,
+    createdAt: now,
+    updatedAt: now,
+    retryable: false,
+  });
+  if (claim.duplicate) {
+    return {
+      requestId: mailRequest.requestId,
+      recipient: claim.delivery.recipient,
+      sent: true,
+      duplicate: true,
+      messageId: claim.delivery.messageId,
+      sentAt: claim.delivery.sentAt,
+    };
+  }
+
+  const delivery = claim.delivery;
+  const transport = createSmtpTransport(smtpConfig);
+  let info;
+  try {
+    info = await transport.sendMail({
+      from: smtpConfig.from,
+      to: mailRequest.recipient,
+      subject: preview.subject,
+      text: preview.body,
+      headers: { "X-Quote-Request-ID": mailRequest.requestId },
+    });
+  } catch (error) {
+    const failure = classifySmtpFailure(error);
+    await updateMailDelivery(mailRequest.requestId, {
+      ...delivery,
+      ...failure,
+      updatedAt: new Date().toISOString(),
+    });
+    console.error("SMTP mail delivery failed:", {
+      requestId: mailRequest.requestId,
+      errorCode: failure.errorCode,
+      errorCommand: failure.errorCommand,
+    });
+    const deliveryError = createHttpError(
+      502,
+      failure.retryable
+        ? "SMTP rejected the message before delivery; check settings and retry"
+        : "SMTP outcome is uncertain; resend is blocked to prevent a duplicate",
+    );
+    deliveryError.retryable = failure.retryable;
+    throw deliveryError;
+  } finally {
+    transport.close();
+  }
+
+  const accepted = Array.isArray(info.accepted) && info.accepted.some((entry) => {
+    const address = typeof entry === "string"
+      ? entry
+      : entry && typeof entry === "object"
+        ? entry.address
+        : "";
+    return typeof address === "string" &&
+      address.toLowerCase() === mailRequest.recipient.toLowerCase();
+  });
+  if (!accepted) {
+    await updateMailDelivery(mailRequest.requestId, {
+      ...delivery,
+      status: "failed",
+      retryable: true,
+      errorCode: "RECIPIENT_REJECTED",
+      updatedAt: new Date().toISOString(),
+    });
+    const deliveryError = createHttpError(502, "SMTP server did not accept the recipient");
+    deliveryError.retryable = true;
+    throw deliveryError;
+  }
+
+  const sentAt = new Date().toISOString();
+  const messageId = info.messageId;
+  await updateMailDelivery(mailRequest.requestId, {
+    ...delivery,
+    status: "sent",
+    retryable: false,
+    sentAt,
+    messageId,
+    updatedAt: sentAt,
+  });
+  return {
+    requestId: mailRequest.requestId,
+    recipient: mailRequest.recipient,
+    sent: true,
+    duplicate: false,
+    messageId,
+    sentAt,
+  };
+}
+
 function getMailPreviewPath(requestId) {
   return path.join(mailPreviewsDirectory, `quote-${requestId}.eml`);
 }
 
 async function readMailPreviewFile(requestId) {
+  if (isSupabaseConfigured) {
+    return readMailPreview(requestId);
+  }
+  if (isVercel) {
+    throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+  }
   try {
     return await readFile(getMailPreviewPath(requestId), "utf8");
   } catch (error) {
@@ -655,6 +813,12 @@ async function readMailPreviewFile(requestId) {
 }
 
 async function writeMailPreviewFile(requestId, content) {
+  if (isSupabaseConfigured) {
+    return writeMailPreview(requestId, content);
+  }
+  if (isVercel) {
+    throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+  }
   await mkdir(mailPreviewsDirectory, { recursive: true });
   const filePath = getMailPreviewPath(requestId);
   const temporaryPath = path.join(
@@ -664,6 +828,7 @@ async function writeMailPreviewFile(requestId, content) {
   try {
     await writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx" });
     await rename(temporaryPath, filePath);
+    return { duplicate: false };
   } catch (error) {
     try {
       await unlink(temporaryPath);
@@ -739,6 +904,44 @@ function getSession(request) {
   }
 
   const token = sessionCookie.slice("quote_session=".length);
+  if (isVercel || isSupabaseConfigured) {
+    const secret = process.env.SESSION_SECRET || "";
+    if (secret.length < 32) {
+      return null;
+    }
+    const separator = token.lastIndexOf(".");
+    if (separator <= 0) {
+      return null;
+    }
+    const payload = token.slice(0, separator);
+    const signature = token.slice(separator + 1);
+    const expected = createHmac("sha256", secret).update(payload).digest();
+    let supplied;
+    try {
+      supplied = Buffer.from(signature, "base64url");
+    } catch {
+      return null;
+    }
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      return null;
+    }
+    try {
+      const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+      if (
+        !session ||
+        typeof session.user?.id !== "string" ||
+        typeof session.user?.name !== "string" ||
+        !Number.isFinite(session.expiresAt) ||
+        session.expiresAt <= Date.now()
+      ) {
+        return null;
+      }
+      return session;
+    } catch {
+      return null;
+    }
+  }
+
   const session = sessions.get(token);
   if (!session || session.expiresAt <= Date.now()) {
     sessions.delete(token);
@@ -747,13 +950,36 @@ function getSession(request) {
   return session;
 }
 
+function createSession(user) {
+  const expiresAt = Date.now() + sessionLifetimeMs;
+  if (isVercel || isSupabaseConfigured) {
+    const secret = process.env.SESSION_SECRET || "";
+    if (secret.length < 32) {
+      throw createHttpError(503, "Configure SESSION_SECRET with at least 32 characters");
+    }
+    const payload = Buffer.from(JSON.stringify({ user, expiresAt })).toString("base64url");
+    const signature = createHmac("sha256", secret).update(payload).digest("base64url");
+    return `${payload}.${signature}`;
+  }
+
+  const token = randomBytes(32).toString("hex");
+  sessions.set(token, { user, expiresAt });
+  return token;
+}
+
+function getSessionCookie(token, request) {
+  const secure = isVercel || request.headers["x-forwarded-proto"] === "https";
+  return `quote_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${sessionLifetimeMs / 1000}${secure ? "; Secure" : ""}`;
+}
+
 function sendUnauthorized(response) {
   sendJson(response, 401, { error: "로그인이 필요합니다." });
 }
 
-const server = http.createServer(async (request, response) => {
+async function handleRequest(request, response) {
   const requestUrl = new URL(request.url, `http://${host}`);
-  const pathname = requestUrl.pathname.replace(/\/+$/, "") || "/";
+  const requestedPath = requestUrl.pathname.replace(/\/+$/, "") || "/";
+  const pathname = requestedPath === "/api/quote" ? "/quote.html" : requestedPath;
 
   if (request.method === "POST" && pathname === "/api/login") {
     try {
@@ -765,21 +991,34 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      const user = await authenticateUser(userFilePath, id, password);
+      let user;
+      if (isVercel || isSupabaseConfigured) {
+        if (!isSupabaseConfigured) {
+          throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+        }
+        const account = await findUserById(id);
+        if (
+          account &&
+          account.active === true &&
+          await verifyPassword(password, account.password_hash)
+        ) {
+          user = { id: account.id, name: account.name };
+        } else {
+          user = null;
+        }
+      } else {
+        user = await authenticateUser(userFilePath, id, password);
+      }
       if (!user) {
         sendJson(response, 401, { error: "아이디 또는 비밀번호를 확인해 주세요." });
         return;
       }
 
-      const token = randomBytes(32).toString("hex");
-      sessions.set(token, {
-        user,
-        expiresAt: Date.now() + sessionLifetimeMs,
-      });
+      const token = createSession(user);
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
-        "Set-Cookie": `quote_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${sessionLifetimeMs / 1000}`,
+        "Set-Cookie": getSessionCookie(token, request),
       });
       response.end(JSON.stringify({ authenticated: true, name: user.name }));
     } catch (error) {
@@ -810,17 +1049,22 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && pathname === "/api/session") {
+      sendJson(response, 200, { authenticated: true, name: session.user.name });
+      return;
+    }
+
     if (request.method === "POST" && pathname === "/api/logout") {
       const sessionCookie = (request.headers.cookie || "").split(";")
         .map((cookie) => cookie.trim())
         .find((cookie) => cookie.startsWith("quote_session="));
-      if (sessionCookie) {
+      if (sessionCookie && !isVercel && !isSupabaseConfigured) {
         sessions.delete(sessionCookie.slice("quote_session=".length));
       }
       response.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
-        "Set-Cookie": "quote_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+        "Set-Cookie": `quote_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${isVercel || request.headers["x-forwarded-proto"] === "https" ? "; Secure" : ""}`,
       });
       response.end(JSON.stringify({ authenticated: false }));
       return;
@@ -939,21 +1183,33 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "POST" && pathname === "/api/orders") {
     try {
       const orderRequest = validateOrderRequest(await readJsonBody(request));
-      const result = await serializeOrderStore(async () => {
-        const orders = await readOrderRows();
-        const existing = orders.find((order) => order.requestId === orderRequest.requestId);
-        if (existing) {
-          if (!matchesOrderRequest(existing, orderRequest)) {
-            throw createHttpError(409, "requestId was already used with different values");
-          }
-          return { order: existing, duplicate: true };
-        }
-
+      let result;
+      if (isSupabaseConfigured) {
         const order = await buildOrderRow(orderRequest);
-        orders.push(order);
-        await writeOrderRows(orders);
-        return { order, duplicate: false };
-      });
+        result = await createOrder(order);
+        if (result.duplicate && !matchesOrderRequest(result.order, orderRequest)) {
+          throw createHttpError(409, "requestId was already used with different values");
+        }
+      } else {
+        if (isVercel) {
+          throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+        }
+        result = await serializeOrderStore(async () => {
+          const orders = await readOrderRows();
+          const existing = orders.find((order) => order.requestId === orderRequest.requestId);
+          if (existing) {
+            if (!matchesOrderRequest(existing, orderRequest)) {
+              throw createHttpError(409, "requestId was already used with different values");
+            }
+            return { order: existing, duplicate: true };
+          }
+
+          const order = await buildOrderRow(orderRequest);
+          orders.push(order);
+          await writeOrderRows(orders);
+          return { order, duplicate: false };
+        });
+      }
       sendJson(response, result.duplicate ? 200 : 201, result);
     } catch (error) {
       if (Number.isInteger(error.statusCode)) {
@@ -994,8 +1250,8 @@ const server = http.createServer(async (request, response) => {
           return { duplicate: true };
         }
 
-        await writeMailPreviewFile(mailRequest.requestId, emlContent);
-        return { duplicate: false };
+        const stored = await writeMailPreviewFile(mailRequest.requestId, emlContent);
+        return { duplicate: stored.duplicate };
       });
       sendJson(response, result.duplicate ? 200 : 201, {
         requestId: mailRequest.requestId,
@@ -1019,7 +1275,14 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "POST" && pathname === "/api/mail") {
     try {
       const mailRequest = validateMailPreviewRequest(await readJsonBody(request));
-      const result = await serializeMailDelivery(async () => {
+      let result;
+      if (isSupabaseConfigured) {
+        result = await sendMailWithSupabase(mailRequest);
+      } else {
+        if (isVercel) {
+          throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+        }
+        result = await serializeMailDelivery(async () => {
         const order = await serializeOrderStore(async () => {
           const orders = await readOrderRows();
           return orders.find((entry) => entry.requestId === mailRequest.requestId);
@@ -1149,7 +1412,8 @@ const server = http.createServer(async (request, response) => {
           messageId: delivery.messageId,
           sentAt: delivery.sentAt,
         };
-      });
+        });
+      }
       sendJson(response, result.duplicate ? 200 : 202, {
         ...result,
         smtpAccepted: true,
@@ -1217,16 +1481,27 @@ const server = http.createServer(async (request, response) => {
     }
 
     try {
-      const deletedOrder = await serializeOrderStore(async () => {
-        const orders = await readOrderRows();
-        const orderIndex = orders.findIndex((order) => order.requestId === requestId);
-        if (orderIndex === -1) {
-          throw createHttpError(404, "Saved order was not found");
+      let deletedOrder;
+      if (isSupabaseConfigured) {
+        deletedOrder = await deleteOrder(requestId);
+      } else {
+        if (isVercel) {
+          throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
         }
-        const [order] = orders.splice(orderIndex, 1);
-        await writeOrderRows(orders);
-        return order;
-      });
+        deletedOrder = await serializeOrderStore(async () => {
+          const orders = await readOrderRows();
+          const orderIndex = orders.findIndex((order) => order.requestId === requestId);
+          if (orderIndex === -1) {
+            throw createHttpError(404, "Saved order was not found");
+          }
+          const [order] = orders.splice(orderIndex, 1);
+          await writeOrderRows(orders);
+          return order;
+        });
+      }
+      if (!deletedOrder) {
+        throw createHttpError(404, "Saved order was not found");
+      }
       sendJson(response, 200, { deleted: true, order: deletedOrder });
     } catch (error) {
       if (Number.isInteger(error.statusCode)) {
@@ -1291,13 +1566,17 @@ const server = http.createServer(async (request, response) => {
   }
 
   sendJson(response, 404, { error: "Not Found" });
-});
+}
 
-server.on("error", (error) => {
-  console.error("Server failed to start:", error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  const server = http.createServer(handleRequest);
+  server.on("error", (error) => {
+    console.error("Server failed to start:", error);
+    process.exitCode = 1;
+  });
+  server.listen(port, host, () => {
+    console.log(`Health server listening at http://${host}:${port}`);
+  });
+}
 
-server.listen(port, host, () => {
-  console.log(`Health server listening at http://${host}:${port}`);
-});
+module.exports = handleRequest;

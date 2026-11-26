@@ -74,6 +74,7 @@ const body = document.querySelector("#materials-body");
       let pendingMailOrder = null;
       let isCreatingMailPreview = false;
       let isSendingMail = false;
+      let isPageInitialized = false;
       let mailPreviewSequence = 0;
       let draftLoadError = "";
       const draftStorageKey = "quote-order-draft-v1";
@@ -1364,10 +1365,33 @@ const body = document.querySelector("#materials-body");
       refresh.addEventListener("click", loadMaterials);
 
       async function initializePage() {
+        if (isPageInitialized) {
+          return;
+        }
+        isPageInitialized = true;
         const draft = readSavedDraft();
         await loadMaterials();
         restoreDraft(draft);
         await loadOrders();
       }
 
-      initializePage();
+      async function startPageAfterSessionCheck() {
+        let session;
+        try {
+          const response = await fetch("/api/session", {
+            credentials: "same-origin",
+            headers: { Accept: "application/json" },
+          });
+          session = await response.json();
+          if (!response.ok || !session || session.authenticated !== true) {
+            window.location.replace("/");
+            return;
+          }
+        } catch {
+          window.location.replace("/");
+          return;
+        }
+        await initializePage();
+      }
+
+      startPageAfterSessionCheck();

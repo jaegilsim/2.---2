@@ -32,6 +32,10 @@
 - `GET /api/mail-previews/quote-<요청ID>.eml`은 생성된 EML 파일을 내려받습니다. 실패해도 주문 저장소와 견적 입력 초안은 변경하지 않습니다.
 - `POST /api/mail`은 저장 기록과 일치하는 제목·본문, 수신자 한 명을 확인하고, 사용자가 확인 대화상자에서 동의한 뒤 루트 `.env`의 SMTP 설정으로 실제 발송합니다. 요청 ID로 중복 발송을 막고, 발송 결과가 불확실하면 자동 재시도를 잠급니다.
 - SMTP 비밀값은 `public/` 밖의 루트 `.env`에 둡니다. `.env.example`은 설정 예시이며, `SMTP_HOST`의 `.example` 값과 계정·비밀번호 자리표시자는 실제 발송에 사용할 수 없습니다. `.env`는 `.gitignore`에서 제외합니다.
+- Vercel 배포는 `vercel.json`과 `api/[...route].js`가 기존 요청 처리기를 서버리스 함수로 연결합니다. `/quote.html`과 `/materials`는 로그인 보호를 위해 이 함수로 다시 씁니다.
+- Vercel에서는 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, 32자 이상의 `SESSION_SECRET`을 서버 전용 환경변수로 설정합니다. 비밀키를 `public/`이나 Git에 올리지 않습니다. Supabase 테이블은 `supabase/schema.sql`로 준비합니다.
+- 배포 계정은 `excel/user.xlsx`를 Supabase에 동기화해야 합니다. 로컬 `.env`에 Supabase 서버 환경변수를 설정한 뒤 `npm run auth:supabase:sync`를 실행하면 기존 scrypt 해시를 전송하며, 비밀번호 원문이나 해시는 출력하지 않습니다.
+- Vercel 모드의 로그인 세션은 서명된 HttpOnly 쿠키이고, 주문·메일 미리보기·메일 전송 상태는 Supabase에 저장합니다. 로컬 환경은 Supabase 설정이 없으면 기존 엑셀과 JSON 파일 저장을 계속 사용합니다.
 - `/`는 `public/index.html` 로그인 화면이며 `public/login.js`가 `POST /api/login`을 호출합니다. 인증 실패는 로그인 화면에 표시하고, 성공하면 서버 세션 쿠키로 견적 화면에 진입합니다.
 - 로그인은 `excel/user.xlsx`의 `users` 시트에서 `id`, `password_hash`, `name`, `active` 열을 조회합니다. `active`가 `Y`인 계정만 scrypt 해시를 검증하며, 성공 시 8시간 HttpOnly·SameSite 세션 쿠키를 발급합니다. 계정 해시나 파일 내용은 API 응답에 포함하지 않습니다.
 - `npm run auth:setup`은 ID·이름·비밀번호를 대화형으로 받아 `excel/user.xlsx`에 해시와 `active=Y`를 저장합니다. 비밀번호는 터미널에서 숨겨 입력하며, 중복 ID와 계정 파일 형식/입출력 오류는 저장 전에 거부합니다.
