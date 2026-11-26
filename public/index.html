@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f7fb">
+    <title>견적 관리 · 로그인</title>
+    <link rel="stylesheet" href="/materials.css">
+  </head>
+  <body>
+    <main class="shell quote-shell">
+      <header class="page-header">
+        <p class="eyebrow">QUOTE MANAGEMENT</p>
+        <h1>로그인</h1>
+        <p class="intro">견적 관리 계정으로 로그인하세요.</p>
+      </header>
+
+      <section class="quote-card" aria-label="로그인">
+        <form id="login-form" class="quote-section" autocomplete="on">
+          <label class="field" for="login-id">
+            아이디
+            <input id="login-id" class="field-control" name="username" type="text" autocomplete="username" required maxlength="100">
+          </label>
+          <label class="field" for="login-password">
+            비밀번호
+            <input id="login-password" class="field-control" name="password" type="password" autocomplete="current-password" required maxlength="256">
+          </label>
+          <button id="login-submit" class="primary-button" type="submit">로그인</button>
+          <p id="login-status" class="notice" role="status" aria-live="polite">
+            로그인 서버 API 연결이 필요합니다.
+          </p>
+        </form>
+      </section>
+    </main>
+    <script src="/login.js" defer></script>
+  </body>
+</html>

@@ -16,7 +16,8 @@ const materialsPath = path.join(excelDirectory, "재질정보.xlsx");
 const ordersStorePath = path.join(__dirname, "storage", "orders.json");
 const mailPreviewsDirectory = path.join(__dirname, "storage", "mail-previews");
 const mailDeliveriesPath = path.join(__dirname, "storage", "mail-deliveries.json");
-const materialsPagePath = path.join(__dirname, "public", "materials.html");
+const loginPagePath = path.join(__dirname, "public", "index.html");
+const quotePagePath = path.join(__dirname, "views", "quote.html");
 const publicAssets = new Map([
   ["/materials.css", {
     path: path.join(__dirname, "public", "materials.css"),
@@ -24,6 +25,10 @@ const publicAssets = new Map([
   }],
   ["/materials.js", {
     path: path.join(__dirname, "public", "materials.js"),
+    contentType: "text/javascript; charset=utf-8",
+  }],
+  ["/login.js", {
+    path: path.join(__dirname, "public", "login.js"),
     contentType: "text/javascript; charset=utf-8",
   }],
 ]);
@@ -1163,17 +1168,32 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === "GET" && (pathname === "/" || pathname === "/materials")) {
+  if (request.method === "GET" && pathname === "/") {
     try {
-      const page = await readFile(materialsPagePath);
+      const page = await readFile(loginPagePath);
       response.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store",
       });
       response.end(page);
     } catch (error) {
-      console.error("Failed to load materials page:", error);
-      sendJson(response, 500, { error: "Failed to load materials page" });
+      console.error("Failed to load login page:", error);
+      sendJson(response, 500, { error: "Failed to load login page" });
+    }
+    return;
+  }
+
+  if (request.method === "GET" && (pathname === "/quote.html" || pathname === "/materials")) {
+    try {
+      const page = await readFile(quotePagePath);
+      response.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      response.end(page);
+    } catch (error) {
+      console.error("Failed to load quote page:", error);
+      sendJson(response, 500, { error: "Failed to load quote page" });
     }
     return;
   }
