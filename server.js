@@ -67,6 +67,8 @@ const isVercel = process.env.VERCEL === "1";
 const isSupabaseConfigured = Boolean(
   process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
 );
+const supabaseConfigurationMessage =
+  "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel Project Settings > Environment Variables, then redeploy";
 
 async function countDataRows(filename, sheetName) {
   const workbook = new ExcelJS.Workbook();
@@ -420,7 +422,7 @@ async function readOrderRows() {
     return listOrders();
   }
   if (isVercel) {
-    throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+    throw createHttpError(503, supabaseConfigurationMessage);
   }
   return readJsonRows(ordersStorePath, "Order storage");
 }
@@ -430,7 +432,7 @@ async function readMailDeliveryRows() {
     return listMailDeliveries();
   }
   if (isVercel && !isSupabaseConfigured) {
-    throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+    throw createHttpError(503, supabaseConfigurationMessage);
   }
   return readJsonRows(mailDeliveriesPath, "Mail delivery storage");
 }
@@ -800,7 +802,7 @@ async function readMailPreviewFile(requestId) {
     return readMailPreview(requestId);
   }
   if (isVercel) {
-    throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+    throw createHttpError(503, supabaseConfigurationMessage);
   }
   try {
     return await readFile(getMailPreviewPath(requestId), "utf8");
@@ -817,7 +819,7 @@ async function writeMailPreviewFile(requestId, content) {
     return writeMailPreview(requestId, content);
   }
   if (isVercel) {
-    throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+    throw createHttpError(503, supabaseConfigurationMessage);
   }
   await mkdir(mailPreviewsDirectory, { recursive: true });
   const filePath = getMailPreviewPath(requestId);
@@ -994,7 +996,7 @@ async function handleRequest(request, response) {
       let user;
       if (isVercel || isSupabaseConfigured) {
         if (!isSupabaseConfigured) {
-          throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+          throw createHttpError(503, supabaseConfigurationMessage);
         }
         const account = await findUserById(id);
         if (
@@ -1192,7 +1194,7 @@ async function handleRequest(request, response) {
         }
       } else {
         if (isVercel) {
-          throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+          throw createHttpError(503, supabaseConfigurationMessage);
         }
         result = await serializeOrderStore(async () => {
           const orders = await readOrderRows();
@@ -1280,7 +1282,7 @@ async function handleRequest(request, response) {
         result = await sendMailWithSupabase(mailRequest);
       } else {
         if (isVercel) {
-          throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+          throw createHttpError(503, supabaseConfigurationMessage);
         }
         result = await serializeMailDelivery(async () => {
         const order = await serializeOrderStore(async () => {
@@ -1486,7 +1488,7 @@ async function handleRequest(request, response) {
         deletedOrder = await deleteOrder(requestId);
       } else {
         if (isVercel) {
-          throw createHttpError(503, "Configure Supabase before using the Vercel deployment");
+          throw createHttpError(503, supabaseConfigurationMessage);
         }
         deletedOrder = await serializeOrderStore(async () => {
           const orders = await readOrderRows();
