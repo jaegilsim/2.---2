@@ -33,8 +33,8 @@
 - `POST /api/mail`은 저장 기록과 일치하는 제목·본문, 수신자 한 명을 확인하고, 사용자가 확인 대화상자에서 동의한 뒤 루트 `.env`의 SMTP 설정으로 실제 발송합니다. 요청 ID로 중복 발송을 막고, 발송 결과가 불확실하면 자동 재시도를 잠급니다.
 - SMTP 비밀값은 `public/` 밖의 루트 `.env`에 둡니다. `.env.example`은 설정 예시이며, `SMTP_HOST`의 `.example` 값과 계정·비밀번호 자리표시자는 실제 발송에 사용할 수 없습니다. `.env`는 `.gitignore`에서 제외합니다.
 - `/`는 `public/index.html` 로그인 화면이며 `public/login.js`가 `POST /api/login`을 호출합니다. 인증 실패는 로그인 화면에 표시하고, 성공하면 서버 세션 쿠키로 견적 화면에 진입합니다.
-- 로그인은 `private_data/user.xlsx`의 `users` 시트에서 `id`, `password_hash`, `name`, `active` 열을 조회합니다. `active`가 `Y`인 계정만 scrypt 해시를 검증하며, 성공 시 8시간 HttpOnly·SameSite 세션 쿠키를 발급합니다. 계정 해시나 파일 내용은 API 응답에 포함하지 않습니다.
-- `npm run auth:setup`은 ID·이름·비밀번호를 대화형으로 받아 `private_data/user.xlsx`에 해시와 `active=Y`를 저장합니다. 비밀번호는 터미널에서 숨겨 입력하며, 중복 ID와 계정 파일 형식/입출력 오류는 저장 전에 거부합니다.
+- 로그인은 `excel/user.xlsx`의 `users` 시트에서 `id`, `password_hash`, `name`, `active` 열을 조회합니다. `active`가 `Y`인 계정만 scrypt 해시를 검증하며, 성공 시 8시간 HttpOnly·SameSite 세션 쿠키를 발급합니다. 계정 해시나 파일 내용은 API 응답에 포함하지 않습니다.
+- `npm run auth:setup`은 ID·이름·비밀번호를 대화형으로 받아 `excel/user.xlsx`에 해시와 `active=Y`를 저장합니다. 비밀번호는 터미널에서 숨겨 입력하며, 중복 ID와 계정 파일 형식/입출력 오류는 저장 전에 거부합니다.
 - `/api/health`를 제외한 API와 `/quote.html`, `/materials`는 로그인 세션을 요구합니다. `POST /api/logout`으로 세션을 종료합니다.
 - `/quote.html`은 `views/quote.html`의 견적 화면이며 기존 `/materials`도 같은 화면을 제공합니다. 화면은 거래처·품목 선택, 재질·주문 정보 입력, 예상 중량 확인 순서이며, 재질 기준정보 표는 접어서 볼 수 있습니다.
 - 견적 화면은 `/api/materials`에서 재질 목록을 불러오며, 계산 결과는 입력값에 따라 실시간 갱신합니다.

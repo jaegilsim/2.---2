@@ -11,7 +11,7 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const port = Number(process.env.PORT || 3000);
 const host = "127.0.0.1";
 const excelDirectory = path.join(__dirname, "excel");
-const userFilePath = path.join(__dirname, "private_data", "user.xlsx");
+const userFilePath = path.join(excelDirectory, "user.xlsx");
 const customersPath = path.join(excelDirectory, "거래처내역.xlsx");
 const itemsPath = path.join(excelDirectory, "품목내역.xlsx");
 const materialsPath = path.join(excelDirectory, "재질정보.xlsx");

@@ -2,7 +2,7 @@ const readline = require("node:readline");
 const path = require("node:path");
 const { setupUser } = require("./auth");
 
-const userFilePath = path.join(__dirname, "private_data", "user.xlsx");
+const userFilePath = path.join(__dirname, "excel", "user.xlsx");
 
 function ask(question) {
   const interfaceInstance = readline.createInterface({
